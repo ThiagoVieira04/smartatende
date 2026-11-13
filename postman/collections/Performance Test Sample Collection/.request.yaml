@@ -1,0 +1,19 @@
+$kind: http-request
+name: ""
+url: http://localhost:8080/api/chat
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"mensagem\": \"O que é Spring Boot?\"\r
+
+    }"
+settings:
+  disabledSystemHeaders:
+    - connection
+    - accept-encoding
+    - accept
+    - user-agent
+    - host
+order: 1000

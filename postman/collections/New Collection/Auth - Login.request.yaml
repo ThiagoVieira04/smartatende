@@ -1,0 +1,18 @@
+$kind: http-request
+name: Auth - Login
+url: "{{baseUrl}}/api/auth/login"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {"email":"joao@teste.com","senha":"senha123"}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      const dados = pm.response.json();
+      pm.environment.set("token", dados.token);
+    language: text/javascript
+order: 2000

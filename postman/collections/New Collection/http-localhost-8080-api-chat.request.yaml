@@ -1,0 +1,22 @@
+$kind: http-request
+name: Chat - Enviar mensagem
+url: "{{baseUrl}}/api/chat"
+method: POST
+headers:
+  Content-Type: application/json
+auth:
+  type: bearer
+  credentials:
+    token: "{{token}}"
+body:
+  type: json
+  content: |-
+    {"sessao":"{{sessao}}","mensagem":"O que é Spring Boot?"}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      const dados = pm.response.json();
+      pm.test("Retorna resposta da IA", () => pm.expect(dados.resposta).to.be.a("string"));
+    language: text/javascript
+order: 4000

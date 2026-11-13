@@ -1,0 +1,18 @@
+$kind: http-request
+name: Chat - Histórico
+url: "{{baseUrl}}/api/chat/historico"
+method: GET
+queryParams:
+  - key: sessao
+    value: "{{sessao}}"
+auth:
+  type: bearer
+  credentials:
+    token: "{{token}}"
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Retorna uma lista", () => pm.expect(pm.response.json()).to.be.an("array"));
+    language: text/javascript
+order: 5000

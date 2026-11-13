@@ -1,0 +1,18 @@
+$kind: http-request
+name: Auth - Register
+url: "{{baseUrl}}/api/auth/register"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {"nome":"João","email":"joao@teste.com","senha":"senha123"}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Status 201", () => pm.response.to.have.status(201));
+      const dados = pm.response.json();
+      pm.environment.set("token", dados.token);
+    language: text/javascript
+order: 1000
