@@ -17,6 +17,7 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -25,12 +26,23 @@ services:
       DB_URL: jdbc:postgresql://db:5432/smartatende
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
+      DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-2}
+      DB_POOL_CONNECTION_TIMEOUT_MS: ${DB_POOL_CONNECTION_TIMEOUT_MS:-30000}
+      DB_POOL_MAX_LIFETIME_MS: ${DB_POOL_MAX_LIFETIME_MS:-1800000}
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no arquivo .env}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:?Defina OPENCODE_API_KEY no arquivo .env}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://opencode.ai/zen/v1}
       OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-v4.1-flash-free}
+      JAVA_OPTS: "${JAVA_OPTS:--XX:MaxRAMPercentage=75.0}"
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
 volumes:
   postgres-data:

@@ -35,6 +35,11 @@ Defina as variáveis de ambiente:
 | `DB_URL` | não em dev | `jdbc:postgresql://localhost:5432/smartatende` | URL JDBC do PostgreSQL |
 | `DB_USER` | não em dev | `postgres` | Usuário do banco |
 | `DB_PASSWORD` | não em dev | `postgres` | Senha do banco |
+| `DB_POOL_MAX_SIZE` | não | `10` | Tamanho máximo do pool Hikari |
+| `DB_POOL_MIN_IDLE` | não | `2` | Conexões idle mantidas no pool |
+| `DB_POOL_CONNECTION_TIMEOUT_MS` | não | `30000` | Timeout para obter conexão do pool |
+| `DB_POOL_MAX_LIFETIME_MS` | não | `1800000` | Tempo máximo de vida de uma conexão do pool |
+| `JAVA_OPTS` | não (Docker) | `-XX:MaxRAMPercentage=75.0` | Opções da JVM no container |
 | `JWT_SECRET` | sim em prod | segredo de desenvolvimento | Chave usada para assinar os tokens JWT |
 | `OPENCODE_API_KEY` | sim para usar IA | `not-set` | Chave da API do provedor de IA |
 | `OPENAI_BASE_URL` | não | `https://opencode.ai/zen/v1` | URL base compatível com OpenAI |
@@ -95,7 +100,7 @@ Para rodar os testes:
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 - Health check: `http://localhost:8080/actuator/health`
-- Info: `http://localhost:8080/actuator/info`
+- Info: `http://localhost:8080/actuator/info` (inclui nome e versão do build)
 
 ## Resiliência da IA
 
@@ -122,7 +127,7 @@ Comportamento em falha:
 
 ## Observabilidade
 
-O Actuator expõe `health`, `info` e `metrics`.
+O Actuator expõe `health`, `info` e `metrics`. O `info` combina os dados de `info.app.*` com os metadados gerados pelo `build-info` (artefato, grupo e versão).
 
 O health check inclui o componente `aiCircuitBreaker` com `state`, `consecutiveFailures` e `openUntil`. Os detalhes aparecem para usuários autenticados (`show-details=when-authorized`).
 
@@ -153,7 +158,7 @@ curl http://localhost:8080/actuator/metrics/smartatende.ai.circuit.state
 
 ## Docker
 
-O `docker-compose.yml` sobe a aplicação e o PostgreSQL juntos.
+O `docker-compose.yml` sobe a aplicação e o PostgreSQL juntos. A imagem instala `curl` e define um `HEALTHCHECK` em `/actuator/health`; o serviço da aplicação usa `restart: unless-stopped` e aguarda o banco ficar saudável.
 
 ```powershell
 Copy-Item .env.example .env
@@ -161,11 +166,25 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
+Acompanhe o estado dos serviços e do health check:
+
+```powershell
+docker compose ps
+docker inspect --format '{{json .State.Health}}' smartatende-app-1
+```
+
 Para parar e remover também o volume do banco:
 
 ```powershell
 docker compose down -v
 ```
+
+## Operação
+
+- O servidor usa `server.shutdown=graceful` e aguarda até 20s pelas requisições em andamento no encerramento.
+- O pool Hikari é configurável por `DB_POOL_*`; a imagem define `JAVA_OPTS` com `-XX:MaxRAMPercentage=75.0`.
+- Respostas JSON/HTML/texto são comprimidas quando o cliente envia `Accept-Encoding`.
+- O `/actuator/info` expõe os metadados do build gerados pelo `spring-boot-maven-plugin`.
 
 ## Integração contínua
 
