@@ -1,0 +1,16 @@
+$kind: http-request
+name: Auth - Logout
+url: "{{baseUrl}}/api/auth/logout"
+method: POST
+auth:
+  type: bearer
+  credentials:
+    token: "{{token}}"
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Status 204", () => pm.response.to.have.status(204));
+      pm.environment.set("token", "");
+      pm.environment.set("refreshToken", "");
+    language: text/javascript
+order: 3500

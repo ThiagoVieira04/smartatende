@@ -16,6 +16,12 @@ public class FixedWindowRateLimiter {
     private record Window(long startedAt, int count) {
     }
 
+    public record Decision(
+            boolean allowed,
+            int remaining,
+            long retryAfterSeconds) {
+    }
+
     private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
     private final Duration window;
     private final LongSupplier clock;
@@ -33,10 +39,10 @@ public class FixedWindowRateLimiter {
         this.clock = clock;
     }
 
-    public boolean tryAcquire(String key, int limit) {
+    public Decision acquire(String key, int limit) {
 
         if (limit <= 0) {
-            return true;
+            return new Decision(true, Integer.MAX_VALUE, 0);
         }
 
         long now = clock.getAsLong();
@@ -53,11 +59,35 @@ public class FixedWindowRateLimiter {
             removeExpired(now, windowMillis);
         }
 
-        return updated.count() <= limit;
+        boolean allowed = updated.count() <= limit;
+        int remaining = Math.max(0, limit - updated.count());
+        long retryAfter = allowed
+                ? 0
+                : segundosAteProximaJanela(updated.startedAt(), now, windowMillis);
+
+        return new Decision(allowed, remaining, retryAfter);
+    }
+
+    public boolean tryAcquire(String key, int limit) {
+        return acquire(key, limit).allowed();
     }
 
     public void reset() {
         windows.clear();
+    }
+
+    private long segundosAteProximaJanela(
+            long startedAt,
+            long now,
+            long windowMillis) {
+
+        long restanteMillis = startedAt + windowMillis - now;
+
+        if (restanteMillis <= 0) {
+            return 1;
+        }
+
+        return Math.max(1, (restanteMillis + 999) / 1000);
     }
 
     private void removeExpired(long now, long windowMillis) {

@@ -7,8 +7,10 @@ API de atendimento inteligente com autenticação JWT, histórico de conversas p
 - Java 21
 - Spring Boot 4.1.2
 - Spring Security + JWT (JJWT)
+- Rate limiting por IP
 - Spring Data JPA + PostgreSQL
 - Spring AI (OpenAI-compatible)
+- Actuator + Micrometer
 - Frontend estático em HTML, CSS e JavaScript
 - Testes com JUnit 5, MockMvc e H2
 
@@ -51,6 +53,28 @@ $env:OPENAI_MODEL = "deepseek-v4.1-flash-free"
 ```
 
 > O modelo `deepseek-v4.1-flash-free` é gratuito e pode retornar `429` quando o limite de uso é atingido. Para uso contínuo, configure `OPENAI_MODEL` e `OPENAI_BASE_URL` para um provedor/modelo com cota adequada.
+
+## Autenticação
+
+O registro e o login retornam um par de tokens:
+
+- `token`: access token JWT, válido por 15 minutos.
+- `refreshToken`: refresh token JWT, válido por 7 dias.
+
+Envie o access token no header `Authorization: Bearer <token>`. Quando ele expirar, use `POST /api/auth/refresh` com o refresh token para obter um novo par. O `POST /api/auth/logout` incrementa a versão do usuário e invalida os tokens emitidos anteriormente.
+
+## Rate limit
+
+Os limites são aplicados por IP em uma janela fixa de 60 segundos:
+
+| Categoria | Endpoints | Limite padrão |
+| --- | --- | --- |
+| `auth` | `POST /api/auth/login`, `/register`, `/refresh` | 20/min |
+| `chat` | `POST /api/chat` | 30/min |
+
+Respostas limitadas retornam `429 Too Many Requests`, com `Retry-After`, `X-RateLimit-Limit` e `X-RateLimit-Remaining`. As requisições permitidas também recebem os headers `X-RateLimit-Limit` e `X-RateLimit-Remaining`.
+
+As configurações ficam em `app.rate-limit.*` (`enabled`, `window`, `auth-per-minute`, `chat-per-minute`). O perfil `test` desabilita o rate limit.
 
 ## Execução
 
@@ -102,15 +126,25 @@ O Actuator expõe `health`, `info` e `metrics`.
 
 O health check inclui o componente `aiCircuitBreaker` com `state`, `consecutiveFailures` e `openUntil`. Os detalhes aparecem para usuários autenticados (`show-details=when-authorized`).
 
+Métricas de autenticação:
+
+| Métrica | Descrição |
+| --- | --- |
+| `smartatende.auth.login` | Logins por resultado (`success`/`failure`) |
+| `smartatende.auth.register` | Cadastros bem-sucedidos |
+
 Métricas da IA:
 
 | Métrica | Descrição |
 | --- | --- |
 | `smartatende.ai.requests` | Requisições por resultado (`success`/`failure`) e tipo de falha (`rate_limit`, `timeout`, `provider`) |
 | `smartatende.ai.retries` | Retentativas por falhas transitórias |
+| `smartatende.ai.latency` | Latência das chamadas à IA, incluindo retries |
 | `smartatende.ai.circuit.state` | Estado do circuito (`0`=CLOSED, `1`=HALF_OPEN, `2`=OPEN) |
 | `smartatende.ai.circuit.failures` | Falhas consecutivas do circuito |
 | `smartatende.ai.circuit.blocked` | Requisições bloqueadas pelo circuito aberto |
+
+Cada resposta inclui `X-Request-Id`, também presente nos logs via MDC. Em produção (`prod`), apenas `health` e `info` são expostos e as métricas exigem autenticação.
 
 ```powershell
 curl http://localhost:8080/actuator/health
@@ -135,17 +169,21 @@ docker compose down -v
 
 ## Integração contínua
 
-O workflow `.github/workflows/ci.yml` executa `mvn -B test` em cada push e pull request.
+O workflow `.github/workflows/ci.yml` executa `./mvnw -B verify` e o build da imagem Docker em cada push e pull request.
 
 ## Endpoints
 
 | Método | Caminho | Autenticação | Descrição |
 | --- | --- | --- | --- |
-| `POST` | `/api/auth/register` | não | Cria um usuário e retorna um token JWT |
-| `POST` | `/api/auth/login` | não | Autentica e retorna um token JWT |
+| `POST` | `/api/auth/register` | não | Cria um usuário e retorna access + refresh token |
+| `POST` | `/api/auth/login` | não | Autentica e retorna access + refresh token |
+| `POST` | `/api/auth/refresh` | não | Renova o par de tokens a partir do refresh token |
+| `POST` | `/api/auth/logout` | Bearer | Invalida os tokens emitidos anteriormente |
 | `GET` | `/api/auth/me` | Bearer | Retorna o usuário autenticado |
 | `POST` | `/api/chat` | Bearer | Envia uma mensagem para a IA |
-| `GET` | `/api/chat/historico` | Bearer | Lista o histórico do usuário |
+| `GET` | `/api/chat` | Bearer | Retorna instruções de uso do endpoint |
+| `GET` | `/api/chat/historico` | Bearer | Lista o histórico do usuário (`sessao`, `page`, `size`) |
+| `DELETE` | `/api/chat/historico` | Bearer | Remove o histórico do usuário (`sessao` opcional) |
 | `GET` | `/api/status` | Bearer | Retorna o status da aplicação |
 
 ### Exemplos
@@ -166,6 +204,21 @@ curl -X POST http://localhost:8080/api/auth/login `
   -d '{"email":"joao@teste.com","senha":"senha123"}'
 ```
 
+Refresh:
+
+```powershell
+curl -X POST http://localhost:8080/api/auth/refresh `
+  -H "Content-Type: application/json" `
+  -d '{"refreshToken":"SEU_REFRESH_TOKEN"}'
+```
+
+Logout:
+
+```powershell
+curl -X POST http://localhost:8080/api/auth/logout `
+  -H "Authorization: Bearer SEU_TOKEN"
+```
+
 Chat:
 
 ```powershell
@@ -175,10 +228,17 @@ curl -X POST http://localhost:8080/api/chat `
   -d '{"sessao":"minha-sessao","mensagem":"O que é Spring Boot?"}'
 ```
 
-Histórico:
+Histórico paginado:
 
 ```powershell
-curl "http://localhost:8080/api/chat/historico?sessao=minha-sessao" `
+curl "http://localhost:8080/api/chat/historico?sessao=minha-sessao&page=0&size=50" `
+  -H "Authorization: Bearer SEU_TOKEN"
+```
+
+Limpar histórico da sessão:
+
+```powershell
+curl -X DELETE "http://localhost:8080/api/chat/historico?sessao=minha-sessao" `
   -H "Authorization: Bearer SEU_TOKEN"
 ```
 
@@ -191,14 +251,15 @@ src/main/java/br/com/smartatende
 ├── dto          Objetos de entrada e saída
 ├── model        Entidades JPA
 ├── repository   Repositórios Spring Data
-├── security     Filtro JWT
+├── security     Filtros JWT, request ID e rate limit
 └── service      Regras de negócio
 ```
 
 ## Perfis
 
 - `dev` (padrão): configuração local com valores de desenvolvimento.
-- `test`: banco H2 em memória, usado pelos testes automatizados.
+- `test`: banco H2 em memória, rate limit desabilitado, usado pelos testes automatizados.
+- `postgres-test`: PostgreSQL via Testcontainers para validar as migrations Flyway.
 - `prod`: exige `DB_URL`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET` e `OPENCODE_API_KEY` via ambiente.
 
 Para executar com um perfil específico:

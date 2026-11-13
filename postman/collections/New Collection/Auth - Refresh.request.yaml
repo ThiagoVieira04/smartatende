@@ -1,0 +1,19 @@
+$kind: http-request
+name: Auth - Refresh
+url: "{{baseUrl}}/api/auth/refresh"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {"refreshToken":"{{refreshToken}}"}
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      const dados = pm.response.json();
+      pm.environment.set("token", dados.token);
+      pm.environment.set("refreshToken", dados.refreshToken);
+    language: text/javascript
+order: 2500

@@ -5,6 +5,10 @@ method: GET
 queryParams:
   - key: sessao
     value: "{{sessao}}"
+  - key: page
+    value: "0"
+  - key: size
+    value: "50"
 auth:
   type: bearer
   credentials:

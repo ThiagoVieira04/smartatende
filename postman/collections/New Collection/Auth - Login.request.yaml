@@ -14,5 +14,6 @@ scripts:
       pm.test("Status 200", () => pm.response.to.have.status(200));
       const dados = pm.response.json();
       pm.environment.set("token", dados.token);
+      pm.environment.set("refreshToken", dados.refreshToken);
     language: text/javascript
 order: 2000

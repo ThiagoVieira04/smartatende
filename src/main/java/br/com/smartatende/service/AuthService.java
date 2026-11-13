@@ -9,6 +9,7 @@ import io.jsonwebtoken.JwtException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -92,6 +93,7 @@ public class AuthService {
         return resposta(usuario);
     }
 
+    @Transactional(readOnly = true)
     public AuthResponse refresh(String refreshToken) {
 
         if (isBlank(refreshToken)) {
@@ -130,6 +132,7 @@ public class AuthService {
         }
     }
 
+    @Transactional
     public void logout(String email) {
 
         Usuario usuario = usuarioRepository.findByEmail(email)

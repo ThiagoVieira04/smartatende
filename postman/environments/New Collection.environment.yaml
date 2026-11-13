@@ -4,5 +4,7 @@ values:
     value: 'http://localhost:8080'
   - key: token
     value: ''
+  - key: refreshToken
+    value: ''
   - key: sessao
     value: minha-sessao

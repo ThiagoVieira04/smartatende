@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,6 +31,29 @@ class FixedWindowRateLimiterTests {
         agora.addAndGet(60_000);
 
         assertTrue(limiter.tryAcquire("ip:auth", 1));
+    }
+
+    @Test
+    void informaRestanteERetryAfter() {
+        FixedWindowRateLimiter.Decision primeira =
+                limiter.acquire("ip:auth", 2);
+
+        assertTrue(primeira.allowed());
+        assertEquals(1, primeira.remaining());
+        assertEquals(0, primeira.retryAfterSeconds());
+
+        FixedWindowRateLimiter.Decision segunda =
+                limiter.acquire("ip:auth", 2);
+
+        assertTrue(segunda.allowed());
+        assertEquals(0, segunda.remaining());
+
+        FixedWindowRateLimiter.Decision bloqueada =
+                limiter.acquire("ip:auth", 2);
+
+        assertFalse(bloqueada.allowed());
+        assertEquals(0, bloqueada.remaining());
+        assertEquals(60, bloqueada.retryAfterSeconds());
     }
 
     @Test

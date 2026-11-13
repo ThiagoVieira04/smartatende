@@ -172,6 +172,17 @@ class AuthIntegrationTests {
     }
 
     @Test
+    void tokenDeUsuarioRemovidoRetorna401() throws Exception {
+        String token = registrar("João", "joao@teste.com", "senha123");
+
+        usuarioRepository.deleteAll();
+
+        mockMvc.perform(get("/api/auth/me")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void refreshTokenNaoAcessaRotaProtegida() throws Exception {
         String json = registrarCompleto("João", "joao@teste.com", "senha123");
         String refresh = JsonPath.read(json, "$.refreshToken");

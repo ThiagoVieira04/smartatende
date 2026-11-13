@@ -18,7 +18,9 @@ import java.time.Instant;
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    private static final String RETRY_AFTER_SECONDS = "60";
+    public static final String HEADER_LIMIT = "X-RateLimit-Limit";
+    public static final String HEADER_REMAINING = "X-RateLimit-Remaining";
+    public static final String HEADER_RETRY_AFTER = "Retry-After";
 
     private final FixedWindowRateLimiter limiter;
     private final ObjectMapper objectMapper;
@@ -57,7 +59,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
             int limite = "auth".equals(categoria) ? authLimit : chatLimit;
             String chave = request.getRemoteAddr() + ":" + categoria;
 
-            if (!limiter.tryAcquire(chave, limite)) {
+            FixedWindowRateLimiter.Decision decision =
+                    limiter.acquire(chave, limite);
+
+            response.setHeader(HEADER_LIMIT, Integer.toString(limite));
+            response.setHeader(
+                    HEADER_REMAINING,
+                    Integer.toString(decision.remaining()));
+
+            if (!decision.allowed()) {
+                response.setHeader(
+                        HEADER_RETRY_AFTER,
+                        Long.toString(decision.retryAfterSeconds()));
                 escreverResposta(request, response);
                 return;
             }
@@ -101,7 +114,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        response.setHeader("Retry-After", RETRY_AFTER_SECONDS);
         objectMapper.writeValue(response.getWriter(), body);
     }
 }
