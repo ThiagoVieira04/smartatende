@@ -20,5 +20,10 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Rodar testes
-        run: mvn -B test
+      - name: Rodar testes e empacotar
+        run: |
+          chmod +x mvnw
+          ./mvnw -B verify
+
+      - name: Construir imagem Docker
+        run: docker build -t smartatende:ci .

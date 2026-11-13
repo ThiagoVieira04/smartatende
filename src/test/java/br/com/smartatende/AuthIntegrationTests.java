@@ -14,9 +14,12 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -141,17 +144,154 @@ class AuthIntegrationTests {
                 .andExpect(jsonPath("$[0].pergunta").value("Pergunta A1"));
     }
 
-    private String registrar(String nome, String email, String senha) throws Exception {
-        String json = mockMvc.perform(post("/api/auth/register")
+    @Test
+    void refreshRenovaTokensERevogaAposLogout() throws Exception {
+        String json = registrarCompleto("João", "joao@teste.com", "senha123");
+        String access = JsonPath.read(json, "$.token");
+        String refresh = JsonPath.read(json, "$.refreshToken");
+
+        mockMvc.perform(post("/api/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"refreshToken\":\"" + refresh + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty());
+
+        mockMvc.perform(post("/api/auth/logout")
+                .header("Authorization", "Bearer " + access))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/auth/me")
+                .header("Authorization", "Bearer " + access))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"refreshToken\":\"" + refresh + "\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void refreshTokenNaoAcessaRotaProtegida() throws Exception {
+        String json = registrarCompleto("João", "joao@teste.com", "senha123");
+        String refresh = JsonPath.read(json, "$.refreshToken");
+
+        mockMvc.perform(get("/api/auth/me")
+                .header("Authorization", "Bearer " + refresh))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void accessTokenNaoRenova() throws Exception {
+        String json = registrarCompleto("João", "joao@teste.com", "senha123");
+        String access = JsonPath.read(json, "$.token");
+
+        mockMvc.perform(post("/api/auth/refresh")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"refreshToken\":\"" + access + "\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void respostaIncluiHeadersDeSegurancaERequestId() throws Exception {
+        String token = registrar("João", "joao@teste.com", "senha123");
+
+        mockMvc.perform(get("/api/status")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(header().string(
+                        "Content-Security-Policy",
+                        containsString("default-src 'self'")))
+                .andExpect(header().string("X-Frame-Options", "DENY"))
+                .andExpect(header().exists("X-Request-Id"));
+    }
+
+    @Test
+    void historicoRespeitaPaginacao() throws Exception {
+        String token = registrar("Ana", "ana@teste.com", "senha123");
+        Usuario ana = usuarioRepository.findByEmail("ana@teste.com").orElseThrow();
+
+        for (int i = 0; i < 5; i++) {
+            salvarConversa(ana, "s1", "Pergunta " + i, "Resposta " + i);
+        }
+
+        mockMvc.perform(get("/api/chat/historico")
+                .param("sessao", "s1")
+                .param("page", "0")
+                .param("size", "2")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].pergunta").value("Pergunta 0"))
+                .andExpect(jsonPath("$[1].pergunta").value("Pergunta 1"));
+
+        mockMvc.perform(get("/api/chat/historico")
+                .param("sessao", "s1")
+                .param("page", "2")
+                .param("size", "2")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].pergunta").value("Pergunta 4"));
+    }
+
+    @Test
+    void excluiHistoricoDaSessao() throws Exception {
+        String token = registrar("Ana", "ana@teste.com", "senha123");
+        Usuario ana = usuarioRepository.findByEmail("ana@teste.com").orElseThrow();
+
+        salvarConversa(ana, "s1", "Pergunta 1", "Resposta 1");
+        salvarConversa(ana, "s2", "Pergunta 2", "Resposta 2");
+
+        mockMvc.perform(delete("/api/chat/historico")
+                .param("sessao", "s1")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        assertEquals(1, conversaRepository.count());
+
+        mockMvc.perform(get("/api/chat/historico")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].pergunta").value("Pergunta 2"));
+    }
+
+    @Test
+    void excluiTodoHistorico() throws Exception {
+        String token = registrar("Ana", "ana@teste.com", "senha123");
+        Usuario ana = usuarioRepository.findByEmail("ana@teste.com").orElseThrow();
+
+        salvarConversa(ana, "s1", "Pergunta 1", "Resposta 1");
+        salvarConversa(ana, "s2", "Pergunta 2", "Resposta 2");
+
+        mockMvc.perform(delete("/api/chat/historico")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        assertEquals(0, conversaRepository.count());
+    }
+
+    private String registrarCompleto(
+            String nome,
+            String email,
+            String senha) throws Exception {
+
+        return mockMvc.perform(post("/api/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(registroJson(nome, email, senha)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.token").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
+    }
 
-        return JsonPath.read(json, "$.token");
+    private String registrar(String nome, String email, String senha) throws Exception {
+        return JsonPath.read(
+                registrarCompleto(nome, email, senha),
+                "$.token");
     }
 
     private String registroJson(String nome, String email, String senha) {

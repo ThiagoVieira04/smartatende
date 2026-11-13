@@ -9,12 +9,21 @@ import java.util.List;
 public interface ConversaRepository
         extends JpaRepository<Conversa, Long> {
 
-    List<Conversa> findByUsuarioEmailOrderByIdAsc(String email);
+    List<Conversa> findByUsuarioEmailOrderByIdAsc(
+            String email,
+            Pageable pageable);
 
-    List<Conversa> findByUsuarioEmailAndSessaoOrderByIdAsc(String email, String sessao);
+    List<Conversa> findByUsuarioEmailAndSessaoOrderByIdAsc(
+            String email,
+            String sessao,
+            Pageable pageable);
 
     List<Conversa> findByUsuarioEmailAndSessaoOrderByIdDesc(
             String email,
             String sessao,
             Pageable pageable);
+
+    long deleteByUsuarioEmail(String email);
+
+    long deleteByUsuarioEmailAndSessao(String email, String sessao);
 }

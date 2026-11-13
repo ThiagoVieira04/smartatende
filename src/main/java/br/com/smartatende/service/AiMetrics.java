@@ -3,7 +3,10 @@ package br.com.smartatende.service;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
 
 @Component
 public class AiMetrics {
@@ -12,6 +15,7 @@ public class AiMetrics {
     private final Counter successCounter;
     private final Counter retryCounter;
     private final Counter circuitBlockedCounter;
+    private final Timer latencyTimer;
 
     public AiMetrics(MeterRegistry meterRegistry, AiCircuitBreaker circuitBreaker) {
         this.meterRegistry = meterRegistry;
@@ -24,6 +28,9 @@ public class AiMetrics {
                 .register(meterRegistry);
         this.circuitBlockedCounter = Counter.builder("smartatende.ai.circuit.blocked")
                 .description("Requisições bloqueadas pelo circuit breaker")
+                .register(meterRegistry);
+        this.latencyTimer = Timer.builder("smartatende.ai.latency")
+                .description("Latência das chamadas à IA, incluindo retries")
                 .register(meterRegistry);
 
         Gauge.builder("smartatende.ai.circuit.state", circuitBreaker,
@@ -53,6 +60,10 @@ public class AiMetrics {
 
     public void recordCircuitBlocked() {
         circuitBlockedCounter.increment();
+    }
+
+    public void recordLatency(Duration duration) {
+        latencyTimer.record(duration);
     }
 
     private static double stateValue(AiCircuitBreaker.State state) {

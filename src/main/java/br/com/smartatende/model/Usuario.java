@@ -21,6 +21,9 @@ public class Usuario {
 
     private String role = "ROLE_USER";
 
+    @Column(name = "token_version", nullable = false)
+    private long tokenVersion;
+
     public Long getId() {
         return id;
     }
@@ -41,6 +44,10 @@ public class Usuario {
         return role;
     }
 
+    public long getTokenVersion() {
+        return tokenVersion;
+    }
+
     public void setNome(String nome) {
         this.nome = nome;
     }
@@ -55,5 +62,9 @@ public class Usuario {
 
     public void setRole(String role) {
         this.role = role;
+    }
+
+    public void setTokenVersion(long tokenVersion) {
+        this.tokenVersion = tokenVersion;
     }
 }

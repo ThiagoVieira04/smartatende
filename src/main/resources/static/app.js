@@ -1,4 +1,5 @@
 const CHAVE_TOKEN = "smartatende.token";
+const CHAVE_REFRESH = "smartatende.refresh";
 const CHAVE_EMAIL = "smartatende.email";
 const CHAVE_NOME = "smartatende.nome";
 
@@ -7,9 +8,28 @@ const chatBox = document.getElementById("chat-box");
 const botaoEnviar = document.getElementById("btn-enviar");
 
 let token = localStorage.getItem(CHAVE_TOKEN);
+let refreshToken = localStorage.getItem(CHAVE_REFRESH);
 let email = localStorage.getItem(CHAVE_EMAIL);
 let nome = localStorage.getItem(CHAVE_NOME);
 let carregando = false;
+
+document.getElementById("tab-login").addEventListener("click", mostrarLogin);
+document.getElementById("tab-register").addEventListener("click", mostrarRegistro);
+
+document.getElementById("form-login").addEventListener("submit", function (event) {
+    event.preventDefault();
+    login();
+});
+
+document.getElementById("form-register").addEventListener("submit", function (event) {
+    event.preventDefault();
+    registrar();
+});
+
+document.getElementById("btn-enviar").addEventListener("click", enviarMensagem);
+document.getElementById("btn-nova-conversa").addEventListener("click", novaConversa);
+document.getElementById("btn-limpar-historico").addEventListener("click", limparHistorico);
+document.getElementById("btn-logout").addEventListener("click", logout);
 
 campo.addEventListener("keypress", function (event) {
     if (event.key === "Enter" && !carregando) {
@@ -62,7 +82,7 @@ async function iniciar() {
     const perfil = await carregarPerfil();
 
     if (!perfil) {
-        logout();
+        await logout();
         return;
     }
 
@@ -72,11 +92,7 @@ async function iniciar() {
 
 async function carregarPerfil() {
     try {
-        const resposta = await fetch("/api/auth/me", {
-            headers: {
-                Authorization: "Bearer " + token
-            }
-        });
+        const resposta = await fetchComToken("/api/auth/me");
 
         if (!resposta.ok) {
             return false;
@@ -170,10 +186,12 @@ async function autenticar(url, corpo, idMensagem) {
         const dados = await resposta.json();
 
         token = dados.token;
+        refreshToken = dados.refreshToken || null;
         email = dados.email;
         nome = dados.nome;
 
         localStorage.setItem(CHAVE_TOKEN, token);
+        localStorage.setItem(CHAVE_REFRESH, refreshToken || "");
         localStorage.setItem(CHAVE_EMAIL, email);
         localStorage.setItem(CHAVE_NOME, nome || "");
 
@@ -195,18 +213,101 @@ function mensagemPorStatus(status) {
     if (status === 401) {
         return "Credenciais inválidas.";
     }
+    if (status === 429) {
+        return "Muitas tentativas. Aguarde um instante.";
+    }
     if (status === 400) {
         return "Preencha todos os campos corretamente.";
     }
     return "Não foi possível autenticar (" + status + ").";
 }
 
-function logout() {
+async function renovarToken() {
+    if (!refreshToken) {
+        return false;
+    }
+
+    try {
+        const resposta = await fetch("/api/auth/refresh", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ refreshToken: refreshToken })
+        });
+
+        if (!resposta.ok) {
+            return false;
+        }
+
+        const dados = await resposta.json();
+
+        token = dados.token;
+        refreshToken = dados.refreshToken || refreshToken;
+        email = dados.email;
+        nome = dados.nome;
+
+        localStorage.setItem(CHAVE_TOKEN, token);
+        localStorage.setItem(CHAVE_REFRESH, refreshToken);
+        localStorage.setItem(CHAVE_EMAIL, email);
+        localStorage.setItem(CHAVE_NOME, nome || "");
+
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function fetchComToken(url, options) {
+    const requisicao = Object.assign({}, options || {});
+    const headers = new Headers(requisicao.headers || {});
+
+    if (token) {
+        headers.set("Authorization", "Bearer " + token);
+    }
+
+    requisicao.headers = headers;
+
+    let resposta = await fetch(url, requisicao);
+
+    if (resposta.status === 401 && refreshToken) {
+        const renovado = await renovarToken();
+
+        if (renovado) {
+            const novasHeaders = new Headers(requisicao.headers || {});
+            novasHeaders.set("Authorization", "Bearer " + token);
+            resposta = await fetch(url, {
+                method: requisicao.method,
+                headers: novasHeaders,
+                body: requisicao.body
+            });
+        }
+    }
+
+    return resposta;
+}
+
+async function logout() {
+    if (token) {
+        try {
+            await fetch("/api/auth/logout", {
+                method: "POST",
+                headers: {
+                    Authorization: "Bearer " + token
+                }
+            });
+        } catch (e) {
+            // A sessão local deve ser encerrada mesmo se o servidor falhar.
+        }
+    }
+
     token = null;
+    refreshToken = null;
     email = null;
     nome = null;
 
     localStorage.removeItem(CHAVE_TOKEN);
+    localStorage.removeItem(CHAVE_REFRESH);
     localStorage.removeItem(CHAVE_EMAIL);
     localStorage.removeItem(CHAVE_NOME);
 
@@ -219,17 +320,12 @@ function logout() {
 async function carregarHistorico() {
 
     try {
-        const resposta = await fetch(
-            "/api/chat/historico?sessao=" + encodeURIComponent(getSessao()),
-            {
-                headers: {
-                    Authorization: "Bearer " + token
-                }
-            }
+        const resposta = await fetchComToken(
+            "/api/chat/historico?sessao=" + encodeURIComponent(getSessao())
         );
 
         if (resposta.status === 401) {
-            logout();
+            await logout();
             return;
         }
 
@@ -252,6 +348,43 @@ async function carregarHistorico() {
     } catch (e) {
         adicionarMensagem(
             "Não foi possível carregar o histórico.",
+            "bot erro"
+        );
+    }
+}
+
+async function limparHistorico() {
+    if (!token || carregando) {
+        return;
+    }
+
+    if (!window.confirm("Deseja apagar o histórico desta conversa?")) {
+        return;
+    }
+
+    try {
+        const resposta = await fetchComToken(
+            "/api/chat/historico?sessao=" + encodeURIComponent(getSessao()),
+            { method: "DELETE" }
+        );
+
+        if (resposta.status === 401) {
+            await logout();
+            return;
+        }
+
+        if (!resposta.ok) {
+            adicionarMensagem(
+                "Não foi possível limpar o histórico.",
+                "bot erro"
+            );
+            return;
+        }
+
+        chatBox.innerHTML = "";
+    } catch (e) {
+        adicionarMensagem(
+            "Não foi possível limpar o histórico.",
             "bot erro"
         );
     }
@@ -282,13 +415,12 @@ async function enviarMensagem() {
     const elementoCarregando = adicionarMensagem("Pensando...", "bot loading");
 
     try {
-        const resposta = await fetch(
+        const resposta = await fetchComToken(
             "/api/chat",
             {
                 method: "POST",
                 headers: {
-                    "Content-Type": "application/json",
-                    Authorization: "Bearer " + token
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
                     sessao: getSessao(),
@@ -298,7 +430,7 @@ async function enviarMensagem() {
         );
 
         if (resposta.status === 401) {
-            logout();
+            await logout();
             return;
         }
 

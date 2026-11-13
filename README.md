@@ -35,6 +35,8 @@ Defina as variáveis de ambiente:
 | `DB_PASSWORD` | não em dev | `postgres` | Senha do banco |
 | `JWT_SECRET` | sim em prod | segredo de desenvolvimento | Chave usada para assinar os tokens JWT |
 | `OPENCODE_API_KEY` | sim para usar IA | `not-set` | Chave da API do provedor de IA |
+| `OPENAI_BASE_URL` | não | `https://opencode.ai/zen/v1` | URL base compatível com OpenAI |
+| `OPENAI_MODEL` | não | `deepseek-v4.1-flash-free` | Modelo de chat usado pela aplicação |
 
 Exemplo no PowerShell:
 
@@ -44,7 +46,11 @@ $env:DB_USER = "postgres"
 $env:DB_PASSWORD = "postgres"
 $env:JWT_SECRET = "uma-chave-forte-com-pelo-menos-32-caracteres"
 $env:OPENCODE_API_KEY = "sua-chave"
+$env:OPENAI_BASE_URL = "https://opencode.ai/zen/v1"
+$env:OPENAI_MODEL = "deepseek-v4.1-flash-free"
 ```
+
+> O modelo `deepseek-v4.1-flash-free` é gratuito e pode retornar `429` quando o limite de uso é atingido. Para uso contínuo, configure `OPENAI_MODEL` e `OPENAI_BASE_URL` para um provedor/modelo com cota adequada.
 
 ## Execução
 

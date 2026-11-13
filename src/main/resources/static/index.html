@@ -13,18 +13,18 @@
         <h1>SmartAtende AI</h1>
 
         <div class="tabs">
-            <button id="tab-login" class="tab active" onclick="mostrarLogin()">Entrar</button>
-            <button id="tab-register" class="tab" onclick="mostrarRegistro()">Cadastrar</button>
+            <button id="tab-login" type="button" class="tab active">Entrar</button>
+            <button id="tab-register" type="button" class="tab">Cadastrar</button>
         </div>
 
-        <form id="form-login" class="form" onsubmit="event.preventDefault(); login();">
+        <form id="form-login" class="form">
             <input id="login-email" type="email" placeholder="E-mail" autocomplete="email" maxlength="255" required>
             <input id="login-senha" type="password" placeholder="Senha" autocomplete="current-password" maxlength="72" required>
             <button type="submit">Entrar</button>
             <p id="auth-msg-login" class="msg"></p>
         </form>
 
-        <form id="form-register" class="form hidden" onsubmit="event.preventDefault(); registrar();">
+        <form id="form-register" class="form hidden">
             <input id="reg-nome" type="text" placeholder="Nome" autocomplete="name" maxlength="120" required>
             <input id="reg-email" type="email" placeholder="E-mail" autocomplete="email" maxlength="255" required>
             <input id="reg-senha" type="password" placeholder="Senha (mínimo 8 caracteres)" autocomplete="new-password" minlength="8" maxlength="72" required>
@@ -38,8 +38,9 @@
             <h1>SmartAtende AI</h1>
             <div class="user-info">
                 <span id="usuario-email"></span>
-                <button class="logout" onclick="novaConversa()">Nova conversa</button>
-                <button class="logout" onclick="logout()">Sair</button>
+                <button id="btn-limpar-historico" type="button" class="logout">Limpar histórico</button>
+                <button id="btn-nova-conversa" type="button" class="logout">Nova conversa</button>
+                <button id="btn-logout" type="button" class="logout">Sair</button>
             </div>
         </div>
 
@@ -53,7 +54,7 @@
                 maxlength="4000"
                 autofocus>
 
-            <button id="btn-enviar" onclick="enviarMensagem()">
+            <button id="btn-enviar" type="button">
                 Enviar
             </button>
         </div>

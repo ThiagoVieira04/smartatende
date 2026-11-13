@@ -3,12 +3,18 @@ package br.com.smartatende;
 import br.com.smartatende.model.Conversa;
 import br.com.smartatende.repository.ConversaRepository;
 import br.com.smartatende.repository.UsuarioRepository;
+import br.com.smartatende.model.Usuario;
 import br.com.smartatende.service.AiCircuitBreaker;
 import com.jayway.jsonpath.JsonPath;
 import com.openai.errors.OpenAIServiceException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -19,10 +25,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.ResourceAccessException;
 
 import java.net.SocketTimeoutException;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -51,6 +59,8 @@ class ChatIntegrationTests {
 
     @MockitoBean
     private ChatClient chatClient;
+
+    private ChatClient.ChatClientRequestSpec ultimaRequest;
 
     @BeforeEach
     void limparBanco() {
@@ -139,6 +149,60 @@ class ChatIntegrationTests {
     }
 
     @Test
+    void limiteDeUsoPorMensagemDoProvedorRetorna503() throws Exception {
+        String token = registrar("João", "joao@teste.com", "senha123");
+        mockFalha(new RuntimeException(
+                "429: Free usage limit reached. Free models work in OpenCode."));
+
+        mockMvc.perform(post("/api/chat")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sessao\":\"s1\",\"mensagem\":\"Olá\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.message").value(
+                        "O limite de uso da IA foi atingido. Tente novamente mais tarde."));
+
+        verify(chatClient, times(1)).prompt();
+        assertEquals(0, conversaRepository.count());
+    }
+
+    @Test
+    void respostaVaziaDaIARetorna502() throws Exception {
+        String token = registrar("João", "joao@teste.com", "senha123");
+        mockResposta("   ");
+
+        mockMvc.perform(post("/api/chat")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sessao\":\"s1\",\"mensagem\":\"Olá\"}"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.status").value(502));
+
+        verify(chatClient, times(1)).prompt();
+        assertEquals(0, conversaRepository.count());
+    }
+
+    @Test
+    void erroNaoTransitorioDoProvedorRetorna502SemRetry() throws Exception {
+        String token = registrar("João", "joao@teste.com", "senha123");
+        OpenAIServiceException falha = mock(OpenAIServiceException.class);
+        when(falha.statusCode()).thenReturn(400);
+        when(falha.getMessage()).thenReturn("requisição inválida");
+        mockFalha(falha);
+
+        mockMvc.perform(post("/api/chat")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sessao\":\"s1\",\"mensagem\":\"Olá\"}"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.status").value(502));
+
+        verify(chatClient, times(1)).prompt();
+        assertEquals(0, conversaRepository.count());
+    }
+
+    @Test
     void timeoutDaIARetorna504ESemHistorico() throws Exception {
         String token = registrar("João", "joao@teste.com", "senha123");
         mockFalha(new ResourceAccessException(
@@ -221,6 +285,44 @@ class ChatIntegrationTests {
     }
 
     @Test
+    void enviaHistoricoComoMensagensEstruturadas() throws Exception {
+        String token = registrar("João", "joao@teste.com", "senha123");
+        Usuario usuario = usuarioRepository.findByEmail("joao@teste.com").orElseThrow();
+
+        Conversa anterior = new Conversa();
+        anterior.setUsuario(usuario);
+        anterior.setSessao("s1");
+        anterior.setPergunta("Pergunta anterior");
+        anterior.setResposta("Resposta anterior");
+        conversaRepository.save(anterior);
+
+        mockResposta("Resposta atual");
+
+        mockMvc.perform(post("/api/chat")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sessao\":\"s1\",\"mensagem\":\"Nova pergunta\"}"))
+                .andExpect(status().isOk());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Message>> captor = ArgumentCaptor.forClass(List.class);
+        verify(ultimaRequest).messages(captor.capture());
+
+        List<Message> mensagens = captor.getValue();
+
+        assertTrue(mensagens.get(0) instanceof SystemMessage);
+        assertTrue(mensagens.stream().anyMatch(mensagem ->
+                mensagem instanceof UserMessage
+                        && mensagem.getText().contains("Pergunta anterior")));
+        assertTrue(mensagens.stream().anyMatch(mensagem ->
+                mensagem instanceof AssistantMessage
+                        && mensagem.getText().contains("Resposta anterior")));
+        assertEquals(
+                "Nova pergunta",
+                ((UserMessage) mensagens.get(mensagens.size() - 1)).getText());
+    }
+
+    @Test
     void sessaoOmitidaUsaDefault() throws Exception {
         String token = registrar("João", "joao@teste.com", "senha123");
         mockResposta("Resposta da IA");
@@ -240,9 +342,10 @@ class ChatIntegrationTests {
         ChatClient.CallResponseSpec response =
                 mock(ChatClient.CallResponseSpec.class);
 
+        ultimaRequest = request;
+
         when(chatClient.prompt()).thenReturn(request);
-        when(request.system(anyString())).thenReturn(request);
-        when(request.user(anyString())).thenReturn(request);
+        when(request.messages(anyList())).thenReturn(request);
         when(request.call()).thenReturn(response);
         when(response.content()).thenReturn(conteudo);
     }
@@ -257,9 +360,10 @@ class ChatIntegrationTests {
         ChatClient.CallResponseSpec response =
                 mock(ChatClient.CallResponseSpec.class);
 
+        ultimaRequest = request;
+
         when(chatClient.prompt()).thenReturn(request);
-        when(request.system(anyString())).thenReturn(request);
-        when(request.user(anyString())).thenReturn(request);
+        when(request.messages(anyList())).thenReturn(request);
         when(request.call()).thenReturn(response);
         when(response.content()).thenThrow(throwable);
     }

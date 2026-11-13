@@ -2,8 +2,7 @@ package br.com.smartatende.service;
 
 import br.com.smartatende.model.Usuario;
 import br.com.smartatende.repository.UsuarioRepository;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
+import br.com.smartatende.security.UsuarioDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
@@ -19,20 +18,18 @@ public class UsuarioDetailsService
     }
 
     @Override
-    public UserDetails loadUserByUsername(String email)
+    public UsuarioDetails loadUserByUsername(String email)
             throws UsernameNotFoundException {
 
         Usuario usuario = repository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException(
                         "Usuário não encontrado: " + email));
 
-        String role = usuario.getRole() == null
-                ? "USER"
-                : usuario.getRole().replaceFirst("^ROLE_", "");
-
-        return User.withUsername(usuario.getEmail())
-                .password(usuario.getSenha() == null ? "" : usuario.getSenha())
-                .roles(role)
-                .build();
+        return new UsuarioDetails(
+                usuario.getId(),
+                usuario.getEmail(),
+                usuario.getSenha(),
+                usuario.getRole(),
+                usuario.getTokenVersion());
     }
 }

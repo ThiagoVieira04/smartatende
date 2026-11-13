@@ -27,6 +27,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no arquivo .env}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:?Defina OPENCODE_API_KEY no arquivo .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://opencode.ai/zen/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-v4.1-flash-free}
     ports:
       - "8080:8080"
 

@@ -40,13 +40,15 @@ class AiMetricsTests {
     }
 
     @Test
-    void registraRetriesECircuitoBloqueado() {
+    void registraRetriesCircuitoBloqueadoELatencia() {
         metrics.recordRetry();
         metrics.recordRetry();
         metrics.recordCircuitBlocked();
+        metrics.recordLatency(Duration.ofMillis(25));
 
         assertEquals(2.0, registry.get("smartatende.ai.retries").counter().count());
         assertEquals(1.0, registry.get("smartatende.ai.circuit.blocked").counter().count());
+        assertEquals(1, registry.get("smartatende.ai.latency").timer().count());
     }
 
     @Test

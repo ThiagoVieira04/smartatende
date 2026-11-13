@@ -10,6 +10,10 @@ import com.openai.errors.OpenAIServiceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -20,6 +24,9 @@ import org.springframework.web.server.ResponseStatusException;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeoutException;
@@ -29,12 +36,20 @@ public class AIService {
 
     private static final Logger log = LoggerFactory.getLogger(AIService.class);
 
+    private static final String SYSTEM_PROMPT = """
+            Você é o SmartAtende AI.
+            Responda sempre em português.
+            Seja cordial.
+            Mantenha o contexto da conversa.
+            """;
+
     private final ChatClient chatClient;
     private final ConversaRepository repository;
     private final UsuarioRepository usuarioRepository;
     private final AiCircuitBreaker circuitBreaker;
     private final AiMetrics aiMetrics;
     private final int historyLimit;
+    private final int historyMaxChars;
     private final int maxRetries;
     private final Duration backoffInitial;
     private final double backoffMultiplier;
@@ -47,6 +62,7 @@ public class AIService {
             AiCircuitBreaker circuitBreaker,
             AiMetrics aiMetrics,
             @Value("${app.ai.history-limit:20}") int historyLimit,
+            @Value("${app.ai.history-max-chars:12000}") int historyMaxChars,
             @Value("${app.ai.retry.max-retries:2}") int maxRetries,
             @Value("${app.ai.retry.backoff-initial:500ms}") Duration backoffInitial,
             @Value("${app.ai.retry.backoff-multiplier:2}") double backoffMultiplier,
@@ -57,6 +73,7 @@ public class AIService {
         this.circuitBreaker = circuitBreaker;
         this.aiMetrics = aiMetrics;
         this.historyLimit = Math.max(1, historyLimit);
+        this.historyMaxChars = Math.max(0, historyMaxChars);
         this.maxRetries = Math.max(0, maxRetries);
         this.backoffInitial = positiveOrDefault(backoffInitial, Duration.ofMillis(500));
         this.backoffMultiplier = backoffMultiplier < 1 ? 2 : backoffMultiplier;
@@ -80,20 +97,9 @@ public class AIService {
                 ? "default"
                 : sessao.trim();
 
-        String historico = montarHistorico(email, sessaoFinal);
+        List<Message> mensagens = montarMensagens(email, sessaoFinal, mensagem);
 
-        String prompt = """
-                Histórico da conversa:
-
-                %s
-
-                Pergunta atual:
-                %s
-                """.formatted(historico, mensagem);
-
-        log.debug("Prompt montado para a IA:\n{}", prompt);
-
-        String resposta = gerarRespostaComProtecao(prompt);
+        String resposta = gerarRespostaComProtecao(mensagens);
 
         Conversa conversa = new Conversa();
         conversa.setUsuario(usuario);
@@ -106,7 +112,10 @@ public class AIService {
         return resposta;
     }
 
-    private String montarHistorico(String email, String sessao) {
+    private List<Message> montarMensagens(
+            String email,
+            String sessao,
+            String mensagem) {
 
         List<Conversa> historico = repository
                 .findByUsuarioEmailAndSessaoOrderByIdDesc(
@@ -114,23 +123,31 @@ public class AIService {
                         sessao,
                         PageRequest.of(0, historyLimit));
 
-        StringBuilder contexto = new StringBuilder();
+        Deque<Message> anteriores = new ArrayDeque<>();
+        int orcamento = historyMaxChars;
 
-        for (int i = historico.size() - 1; i >= 0; i--) {
-            Conversa conversa = historico.get(i);
+        for (Conversa conversa : historico) {
+            int custo = safeLength(conversa.getPergunta())
+                    + safeLength(conversa.getResposta());
 
-            contexto.append("Usuário: ")
-                    .append(conversa.getPergunta())
-                    .append("\n");
-            contexto.append("Assistente: ")
-                    .append(conversa.getResposta())
-                    .append("\n");
+            if (custo > orcamento) {
+                break;
+            }
+
+            orcamento -= custo;
+            anteriores.addFirst(new AssistantMessage(safe(conversa.getResposta())));
+            anteriores.addFirst(new UserMessage(safe(conversa.getPergunta())));
         }
 
-        return contexto.toString();
+        List<Message> mensagens = new ArrayList<>();
+        mensagens.add(new SystemMessage(SYSTEM_PROMPT));
+        mensagens.addAll(anteriores);
+        mensagens.add(new UserMessage(mensagem));
+
+        return mensagens;
     }
 
-    private String gerarRespostaComProtecao(String prompt) {
+    private String gerarRespostaComProtecao(List<Message> mensagens) {
 
         if (!circuitBreaker.allowRequest()) {
             aiMetrics.recordCircuitBlocked();
@@ -142,8 +159,10 @@ public class AIService {
                             + "Tente novamente em instantes.");
         }
 
+        long inicio = System.nanoTime();
+
         try {
-            String resposta = chamarIA(prompt);
+            String resposta = chamarIA(mensagens);
             circuitBreaker.recordSuccess();
             aiMetrics.recordSuccess();
             return resposta;
@@ -151,10 +170,13 @@ public class AIService {
             circuitBreaker.recordFailure();
             aiMetrics.recordFailure(classifyFailure(exception));
             throw mapAiException(exception);
+        } finally {
+            aiMetrics.recordLatency(
+                    Duration.ofNanos(System.nanoTime() - inicio));
         }
     }
 
-    private String chamarIA(String prompt) {
+    private String chamarIA(List<Message> mensagens) {
 
         int tentativas = maxRetries + 1;
         RuntimeException ultimaFalha = null;
@@ -162,7 +184,7 @@ public class AIService {
 
         for (int tentativa = 1; tentativa <= tentativas; tentativa++) {
             try {
-                return chamarIAUmaVez(prompt);
+                return chamarIAUmaVez(mensagens);
             } catch (RuntimeException exception) {
                 ultimaFalha = exception;
 
@@ -182,16 +204,10 @@ public class AIService {
         throw ultimaFalha;
     }
 
-    private String chamarIAUmaVez(String prompt) {
+    private String chamarIAUmaVez(List<Message> mensagens) {
 
         String resposta = chatClient.prompt()
-                .system("""
-                        Você é o SmartAtende AI.
-                        Responda sempre em português.
-                        Seja cordial.
-                        Mantenha o contexto da conversa.
-                        """)
-                .user(prompt)
+                .messages(mensagens)
                 .call()
                 .content();
 
@@ -329,5 +345,13 @@ public class AIService {
         }
 
         return value;
+    }
+
+    private int safeLength(String texto) {
+        return texto == null ? 0 : texto.length();
+    }
+
+    private String safe(String texto) {
+        return texto == null ? "" : texto;
     }
 }
